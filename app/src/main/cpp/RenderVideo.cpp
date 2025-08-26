@@ -8,6 +8,8 @@
 #include <android/native_window_jni.h>
 #include <GLES3/gl3.h>
 #include "RenderVideo.h"
+#include <media/NdkImage.h>
+#include <media/NdkImageReader.h>
 
 
 RenderVideo::RenderVideo() {
@@ -15,7 +17,7 @@ RenderVideo::RenderVideo() {
 }
 
 
-int32_t videoWidth,videoHeight,surfaceWidth,surfaceHeight;
+int32_t videoWidth,videoHeight,surfaceWidth,surfaceHeight,videoStride;
 
 void RenderVideo::initTexture(){
     glGenTextures(1, &texY);
@@ -23,18 +25,26 @@ void RenderVideo::initTexture(){
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, videoWidth, videoHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glGenTextures(1, &texU);
     glBindTexture(GL_TEXTURE_2D, texU);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, videoWidth/2, videoHeight/2, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glGenTextures(1, &texV);
     glBindTexture(GL_TEXTURE_2D, texV);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, videoWidth/2, videoHeight/2, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    lutTex = loadCubeLUT("/data/data/com.zt.opengles_redenerer/cache/caneon_cube.cube", lutSize);
+
 
     LOGI("纹理创建成功%d  %d",videoWidth,videoHeight);
 }
@@ -106,9 +116,10 @@ void RenderVideo::render() {
             AMediaFormat* newFormat = AMediaCodec_getOutputFormat(mMediaCodec);
             AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_WIDTH, &videoWidth);
             AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_HEIGHT, &videoHeight);
+            AMediaFormat_getInt32(format, "stride", &videoStride);
             int32_t colorFormat = -1;
             AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_COLOR_FORMAT, &colorFormat);
-            LOGI("format:%d",colorFormat);
+            LOGI("format:%d   videoStride:%d",colorFormat,videoStride);
             initProgram();
 
         }
@@ -123,9 +134,6 @@ void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
     glViewport(0, 0, surfaceWidth, surfaceHeight);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(renderProgram);
-    glUniform1i(glGetUniformLocation(renderProgram, "tex_y"), 0);
-    glUniform1i(glGetUniformLocation(renderProgram, "tex_u"), 1);
-    glUniform1i(glGetUniformLocation(renderProgram, "tex_v"), 2);
     LOGE("rendFrameToTexture videoWidth:%d videoHeight:%d",videoWidth,videoHeight);
     // 计算分量大小
     int ySize = videoWidth * videoHeight;
@@ -144,25 +152,41 @@ void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
     // 上传纹理数据
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texY);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+//    glPixelStorei(GL_UNPACK_ROW_LENGTH, videoStride); // stride in pixels
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, videoWidth, videoHeight,
                     GL_RED, GL_UNSIGNED_BYTE, yPlane);
 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texU);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+//    glPixelStorei(GL_UNPACK_ROW_LENGTH, videoStride/2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight,
                     GL_RED, GL_UNSIGNED_BYTE, uPlane);
 
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, texV);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, videoStride/2);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight,
                     GL_RED, GL_UNSIGNED_BYTE, vPlane);
+
+    // LUT
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_3D, lutTex);
+    glUniform1i(glGetUniformLocation(renderProgram, "texY"), 0);
+    glUniform1i(glGetUniformLocation(renderProgram, "texU"), 1);
+    glUniform1i(glGetUniformLocation(renderProgram, "texV"), 2);
+    glUniform1i(glGetUniformLocation(renderProgram, "lutTex"), 3);
+    glUniform1f(glGetUniformLocation(renderProgram, "lutSize"), (float)lutSize);
+
 
     // 清除并绘制
 
     glBindVertexArray(vao);
     GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
-        LOGE("GL ERROR: %x", err);
+        LOGE("GL ERROR: %x ,lutsize:%d", err,lutSize);
     }
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);

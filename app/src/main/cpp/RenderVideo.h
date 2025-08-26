@@ -30,26 +30,38 @@ public:
     const char* fragmentShaders = R"(
             #version 300 es
             precision mediump float;
+            precision mediump sampler3D;
+
+            uniform sampler2D texY;
+            uniform sampler2D texU;
+            uniform sampler2D texV;
+            uniform sampler3D lutTex;
+            uniform float lutSize;
 
             in vec2 vTexCoord;
             out vec4 fragColor;
 
-            uniform sampler2D tex_y;
-            uniform sampler2D tex_u;
-            uniform sampler2D tex_v;
-
             void main() {
-                float y = texture(tex_y, vTexCoord).r;
-                float u = texture(tex_u, vTexCoord).r - 0.5;
-                float v = texture(tex_v, vTexCoord).r - 0.5;
+                float y = texture(texY, vTexCoord).r;
+                float u = texture(texU, vTexCoord).r - 0.5;
+                float v = texture(texV, vTexCoord).r - 0.5;
 
-                float r = y + 1.403 * v;
-                float g = y - 0.344 * u - 0.714 * v;
-                float b = y + 1.770 * u;
+                // YUV420 -> RGB (BT.709)
+                vec3 rgb;
+                rgb.r = y + 1.5748 * v;
+                rgb.g = y - 0.183 * u - 0.614 * v;
+                rgb.b = y + 1.8556 * u;
 
-                fragColor = vec4(r, g, b, 1.0);
+                rgb = clamp(rgb,0.01,0.99);
+
+                // LUT 采样
+                vec3 uvw = rgb * (lutSize - 1.0) / lutSize + 0.5 / lutSize;
+                vec3 mapped = texture(lutTex, uvw).rgb;
+                if(vTexCoord.x < 0.5)
+                    fragColor = vec4(rgb,1.0);
+                else
+                    fragColor = vec4(mapped, 1.0);
             }
-
 )";
     // x, y, u, v
     GLfloat vertexData[16] = {
@@ -62,7 +74,8 @@ public:
             // 右上角
             1.0f,  1.0f,  1.0f, 0.0f
     };
-    GLuint vao,vbo,texY,texU,texV,renderProgram;
+    GLuint vao,vbo,texY,texU,texV,renderProgram,lutTex;
+    int lutSize;
     RenderVideo();
     void render();
     GLuint loadCubeLUT(const char* cubePath,int& lutSizeOut);
@@ -106,11 +119,13 @@ private:
             GLint compileStatus[1] = {0};
             glGetShaderiv(shaderId, GL_COMPILE_STATUS, compileStatus);
             if (compileStatus[0] == 0) {
-                std::vector<GLchar> infoLog(compileStatus[0]);
-                glGetShaderInfoLog(shaderId,compileStatus[0], nullptr,infoLog.data());
-                LOGE("error Shader");
-                //创建失败
-                glDeleteShader(shaderId);
+                GLint logLen = 0;
+                glGetShaderiv(shaderId, GL_INFO_LOG_LENGTH, &logLen);
+                if (logLen > 1) {
+                    std::vector<char> log(logLen);
+                    glGetShaderInfoLog(shaderId, logLen, nullptr, log.data());
+                    printf("Shader compile error:\n%s\n", log.data());
+                }
                 return 0;
             }
             return shaderId;
