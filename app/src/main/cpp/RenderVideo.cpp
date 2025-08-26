@@ -18,7 +18,6 @@ RenderVideo::RenderVideo() {
 
 
 int32_t videoWidth,videoHeight,surfaceWidth,surfaceHeight,videoStride;
-
 void RenderVideo::initTexture(){
     glGenTextures(1, &texY);
     glBindTexture(GL_TEXTURE_2D, texY);
@@ -43,7 +42,7 @@ void RenderVideo::initTexture(){
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    lutTex = loadCubeLUT("/data/data/com.zt.opengles_redenerer/cache/caneon_cube.cube", lutSize);
+    lutTex = loadCubeLUT("/data/data/com.zt.opengles_redenerer/cache/sony_1_cube.cube", lutSize);
 
 
     LOGI("纹理创建成功%d  %d",videoWidth,videoHeight);
@@ -55,15 +54,17 @@ void RenderVideo::bindSurface(JNIEnv *env, jobject surface) {
         LOGE("打开失败: %s", strerror(errno));
         return;
     }
-    off64_t start = 0, length = lseek(fd, 0, SEEK_END);
-    if (length <= 0) {
-        LOGE("文件大小异常: %ld", length);
+    off64_t start = 0;
+    off64_t videoLength = 0;
+    videoLength = lseek(fd, 0, SEEK_END);
+    if (videoLength <= 0) {
+        LOGE("文件大小异常: %lld", videoLength);
         close(fd);
         return;
     }
-    LOGE("文件长度%ld",length);
+    LOGE("文件长度%lld",videoLength);
     lseek(fd, 0, SEEK_SET);
-    AMediaExtractor_setDataSourceFd(mMediaExtractor,fd,start,length);
+    AMediaExtractor_setDataSourceFd(mMediaExtractor,fd,start,videoLength);
 
     chooseVideoTrack();
 //    mNativeWindow = ANativeWindow_fromSurface(env,surface);
@@ -75,6 +76,8 @@ void RenderVideo::bindSurface(JNIEnv *env, jobject surface) {
 }
 
 void RenderVideo::render() {
+    if(isRunning)
+        return;
     isRunning = true;
     AMediaCodec_start(mMediaCodec);
     LOGE("render");
@@ -108,8 +111,9 @@ void RenderVideo::render() {
             size_t bufSize;
             uint8_t* outputBuf = AMediaCodec_getOutputBuffer(mMediaCodec, outputIndex, &bufSize);
             // ✅ 拿到帧数据，上传到 OpenGL
-            renderFrameToTexture(outputBuf);
-
+            if(!isRunning)
+                totalTimeStripe = info.presentationTimeUs;
+            renderFrameToTexture(outputBuf,&info.presentationTimeUs);
             AMediaCodec_releaseOutputBuffer(mMediaCodec, outputIndex, false);
         } else if (outputIndex == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
             // 可读取新格式（宽高）
@@ -125,12 +129,11 @@ void RenderVideo::render() {
         }
 //        sleep(1);
     }
-    AMediaCodec_stop(mMediaCodec);
+    AMediaCodec_flush(mMediaCodec);
     AMediaExtractor_seekTo(mMediaExtractor, 0, AMEDIAEXTRACTOR_SEEK_CLOSEST_SYNC);
-//    AMediaCodec_delete(mMediaCodec);
 }
 
-void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
+void RenderVideo::renderFrameToTexture(uint8_t *yuvData,const int64_t *currentTimeStripe) {
     glViewport(0, 0, surfaceWidth, surfaceHeight);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(renderProgram);
@@ -148,7 +151,6 @@ void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
     LOGE("Y: %d %d %d %d", yPlane[0], yPlane[1], yPlane[2], yPlane[3]);
     LOGE("U: %d %d %d %d", uPlane[0], uPlane[1], uPlane[2], uPlane[3]);
     LOGE("V: %d %d %d %d", vPlane[0], vPlane[1], vPlane[2], vPlane[3]);
-
     // 上传纹理数据
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texY);
@@ -171,6 +173,7 @@ void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight,
                     GL_RED, GL_UNSIGNED_BYTE, vPlane);
 
+    LOGI("总长：%lld 目前：%lld",totalTimeStripe,*currentTimeStripe);
     // LUT
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_3D, lutTex);
@@ -179,6 +182,7 @@ void RenderVideo::renderFrameToTexture(uint8_t *yuvData) {
     glUniform1i(glGetUniformLocation(renderProgram, "texV"), 2);
     glUniform1i(glGetUniformLocation(renderProgram, "lutTex"), 3);
     glUniform1f(glGetUniformLocation(renderProgram, "lutSize"), (float)lutSize);
+    glUniform1f(glGetUniformLocation(renderProgram,"split"),(float)*currentTimeStripe/(float)totalTimeStripe);
 
 
     // 清除并绘制

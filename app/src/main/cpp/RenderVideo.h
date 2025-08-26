@@ -37,6 +37,7 @@ public:
             uniform sampler2D texV;
             uniform sampler3D lutTex;
             uniform float lutSize;
+            uniform float split;
 
             in vec2 vTexCoord;
             out vec4 fragColor;
@@ -57,7 +58,7 @@ public:
                 // LUT 采样
                 vec3 uvw = rgb * (lutSize - 1.0) / lutSize + 0.5 / lutSize;
                 vec3 mapped = texture(lutTex, uvw).rgb;
-                if(vTexCoord.x < 0.5)
+                if(vTexCoord.x > split)
                     fragColor = vec4(rgb,1.0);
                 else
                     fragColor = vec4(mapped, 1.0);
@@ -75,6 +76,7 @@ public:
             1.0f,  1.0f,  1.0f, 0.0f
     };
     GLuint vao,vbo,texY,texU,texV,renderProgram,lutTex;
+    int64_t totalTimeStripe;
     int lutSize;
     RenderVideo();
     void render();
@@ -91,7 +93,7 @@ private:
     EGLSurface eglSurface;
     EGLConfig eglConfig;
     bool isRunning;
-    void renderFrameToTexture(uint8_t* yuvData);
+    void renderFrameToTexture(uint8_t* yuvData,const int64_t *currentTimeStripe);
     int chooseVideoTrack(){
         int numTracks = AMediaExtractor_getTrackCount(mMediaExtractor);
         for (int i = 0; i < numTracks; ++i) {
@@ -99,6 +101,7 @@ private:
             if (AMediaFormat_getString(format, AMEDIAFORMAT_KEY_MIME, &mime) &&
                 strncmp(mime, "video/", 6) == 0) {
                 AMediaExtractor_selectTrack(mMediaExtractor, i);
+                AMediaFormat_getInt64(format,AMEDIAFORMAT_KEY_DURATION,&totalTimeStripe);
                 mMediaCodec = AMediaCodec_createDecoderByType(mime);
                 return i;
             }

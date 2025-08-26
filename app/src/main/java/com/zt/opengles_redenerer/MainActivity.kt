@@ -15,6 +15,8 @@ import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 
 class MainActivity : AppCompatActivity(), Handler.Callback {
@@ -24,7 +26,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     private lateinit var mHandler: Handler
     lateinit var cubeSurface: CubeSurface
     private var isFirstInit = true
-
+    private var executors : ExecutorService = Executors.newCachedThreadPool()
     companion object{
         init {
             System.loadLibrary("native-color-lib")
@@ -99,7 +101,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
         when(message.what){
             1->{
 //                videoHelper.extractorFileToMediaCodec(this@MainActivity,cubeSurface.currentSurface)
-                renderSurface()
+                executors.execute {
+                    renderSurface()
+                }
             }
             2->{
                 videoHelper.paintCube()
