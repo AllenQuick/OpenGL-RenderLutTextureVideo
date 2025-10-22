@@ -1,6 +1,5 @@
 package com.zt.opengles_redenerer
 
-import android.icu.number.IntegerWidth
 import android.util.Log
 import android.view.Surface
 import android.view.SurfaceHolder
@@ -29,7 +28,7 @@ class CubeSurface:SurfaceHolder.Callback {
                     Log.e("surfaceCreate", "EGL环境是否创建成功::$isSuccess")
                 }*/
                 currentSurface = p0.surface
-                initRenderVideo(p0.surface)
+                initFileData()
             }
         }
 
@@ -43,6 +42,8 @@ class CubeSurface:SurfaceHolder.Callback {
     ) {
         width = p2
         height = p3
+
+        Log.e("surfaceDestroy", "改变")
 //        render()
     }
 
@@ -53,6 +54,7 @@ class CubeSurface:SurfaceHolder.Callback {
                     cleanupEGL()
                     Log.e("surfaceDestroy", "销毁")
                 }*/
+                Log.e("surfaceDestroy", "销毁")
             }
         }
     }

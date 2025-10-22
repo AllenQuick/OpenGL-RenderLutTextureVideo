@@ -22,9 +22,9 @@ JNIEXPORT void JNICALL surfaceChanged(JNIEnv *, jobject, jint, jint);
 
 JNIEXPORT void JNICALL onDrawFrame(JNIEnv *, jobject);
 
-JNIEXPORT jboolean JNICALL initRenderVideo(JNIEnv *, jobject, jobject);
+JNIEXPORT void JNICALL initRenderVideo(JNIEnv *env, jobject thiz);
 
-JNIEXPORT void JNICALL renderSurface(JNIEnv *, jobject);
+JNIEXPORT void JNICALL renderSurface(JNIEnv *, jobject, jobject);
 
 #ifdef __cplusplus
 }

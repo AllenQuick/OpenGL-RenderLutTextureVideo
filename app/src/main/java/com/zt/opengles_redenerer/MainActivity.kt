@@ -2,16 +2,12 @@ package com.zt.opengles_redenerer
 
 import android.content.pm.ActivityInfo
 import android.graphics.Color
-import android.media.MediaPlayer
 import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.Looper
 import android.os.Message
-import android.util.Log
 import android.view.Surface
-import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -48,9 +44,9 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
 
     external fun onDrawFrame()
 
-    external fun initRenderVideo(surface: Surface): Boolean
+    external fun initFileData()
 
-    external fun renderSurface()
+    external fun renderSurface(surface: Surface)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,8 +58,8 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             mHandler = Handler(mHandlerThread.looper,this)
             isFirstInit = false
             videoHelper = VideoHelper()
+            initListener()
         }
-        initListener()
     }
 
     private fun initListener(){
@@ -102,7 +98,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             1->{
 //                videoHelper.extractorFileToMediaCodec(this@MainActivity,cubeSurface.currentSurface)
                 executors.execute {
-                    renderSurface()
+                    renderSurface(cubeSurface.currentSurface)
                 }
             }
             2->{

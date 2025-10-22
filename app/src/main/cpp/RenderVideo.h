@@ -75,14 +75,14 @@ public:
             // 右上角
             1.0f,  1.0f,  1.0f, 0.0f
     };
-    GLuint vao,vbo,texY,texU,texV,renderProgram,lutTex;
+    GLuint vao,vbo,videoFbo,texY,texU,texV,renderProgram,lutTex;
     int64_t totalTimeStripe;
     int lutSize;
     RenderVideo();
-    void render();
+    void render(JNIEnv *env, jobject surface);
     GLuint loadCubeLUT(const char* cubePath,int& lutSizeOut);
 
-    void bindSurface(JNIEnv *env, jobject surface);
+    void openDataFile();
 
 private:
     AMediaExtractor* mMediaExtractor;
@@ -94,6 +94,7 @@ private:
     EGLConfig eglConfig;
     bool isRunning;
     void renderFrameToTexture(uint8_t* yuvData,const int64_t *currentTimeStripe);
+    void renderYUVAndLutFrame(uint8_t *yuvData,const int64_t *currentTimeStripe);
     int chooseVideoTrack(){
         int numTracks = AMediaExtractor_getTrackCount(mMediaExtractor);
         for (int i = 0; i < numTracks; ++i) {
@@ -162,8 +163,10 @@ private:
         }
     }
 
-    void initEGL(JNIEnv *env, jobject surface);
 
+    void initEGL();
+
+    void checkAndActivateSurface(JNIEnv *env, jobject surface);
 };
 
 

@@ -27,8 +27,8 @@ JNINativeMethod methods[] = {
         {"surfaceCreated", "(I)V",  (void *) surfaceCreated},
         {"surfaceChanged", "(II)V", (void *) surfaceChanged},
         {"onDrawFrame",    "()V",   (void *) onDrawFrame},
-        {"initRenderVideo","(Landroid/view/Surface;)Z",(void *)initRenderVideo},
-        {"renderSurface","()V",(void *)renderSurface}
+        {"initFileData","()V",(void *)initRenderVideo},
+        {"renderSurface","(Landroid/view/Surface;)V",(void *)renderSurface}
 };
 
 
@@ -319,13 +319,12 @@ void onDrawFrame(JNIEnv *env, jobject obj) {
 }
 
 
-void renderSurface(JNIEnv *env, jobject obj) {
-    renderVideo.render();
+void renderSurface(JNIEnv *env, jobject obj, jobject surface) {
+    renderVideo.render(env,surface);
 }
 
-jboolean initRenderVideo(JNIEnv *env, jobject obj, jobject surface) {
-    renderVideo.bindSurface(env,surface);
-    return true;
+void initRenderVideo(JNIEnv *env, jobject obj) {
+    renderVideo.openDataFile();
 }
 
 
