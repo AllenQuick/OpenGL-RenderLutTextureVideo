@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Message
+import android.util.Log
 import android.view.Surface
 import android.view.SurfaceView
 import android.widget.TextView
@@ -21,7 +22,7 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     private lateinit var mHandlerThread: HandlerThread
     private lateinit var mHandler: Handler
     lateinit var cubeSurface: CubeSurface
-    private var isFirstInit = true
+    private var isFirstInit = "是否第一次启动activity"
     private var executors : ExecutorService = Executors.newCachedThreadPool()
     companion object{
         init {
@@ -51,15 +52,21 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        if(isFirstInit) {
-            cubeSurface = CubeSurface(this)
-            mHandlerThread = HandlerThread("IO")
-            mHandlerThread.start()
-            mHandler = Handler(mHandlerThread.looper,this)
-            isFirstInit = false
-            videoHelper = VideoHelper()
-            initListener()
+        if(savedInstanceState?.getBoolean(isFirstInit,false) != true) {
+            initFileData()
         }
+        cubeSurface = CubeSurface(this)
+        mHandlerThread = HandlerThread("IO")
+        mHandlerThread.start()
+        mHandler = Handler(mHandlerThread.looper,this)
+        videoHelper = VideoHelper()
+        initListener()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(isFirstInit,true)
+        Log.e("保存数据", "保存")
     }
 
     private fun initListener(){
@@ -80,7 +87,6 @@ class MainActivity : AppCompatActivity(), Handler.Callback {
             val message = mHandler.obtainMessage()
             message.what = 1
             mHandler.sendMessage(message)
-
         }
     }
 

@@ -11,6 +11,11 @@
 #include <iostream>
 #include <vector>
 #include <EGL/egl.h>
+#include <queue>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <stdio.h>
 
 class RenderVideo {
 public:
@@ -79,12 +84,18 @@ public:
     int64_t totalTimeStripe;
     int lutSize;
     RenderVideo();
-    void render(JNIEnv *env, jobject surface);
+    void startPlayer(JNIEnv *env, jobject surface);
+
     GLuint loadCubeLUT(const char* cubePath,int& lutSizeOut);
 
     void openDataFile();
 
 private:
+    struct Frame {
+        uint8_t* data;
+        size_t size;
+        int64_t ptsUs;
+    };
     AMediaExtractor* mMediaExtractor;
     AMediaCodec* mMediaCodec;
     ANativeWindow* mNativeWindow;
@@ -93,8 +104,16 @@ private:
     EGLSurface eglSurface;
     EGLConfig eglConfig;
     bool isRunning;
-    void renderFrameToTexture(uint8_t* yuvData,const int64_t *currentTimeStripe);
-    void renderYUVAndLutFrame(uint8_t *yuvData,const int64_t *currentTimeStripe);
+    // 线程安全队列
+    std::mutex queueMutex;
+    std::condition_variable queueCond;
+    std::queue<Frame> frameQueue;
+    std::thread decodeThreadHandle;
+    std::thread renderThreadHandle;
+    void renderFrameToTexture(Frame *yuvData);
+    void renderYUVAndLutFrame(Frame *yuvData);
+    void renderThread(JNIEnv *env, jobject surface);
+    void decodeThread();
     int chooseVideoTrack(){
         int numTracks = AMediaExtractor_getTrackCount(mMediaExtractor);
         for (int i = 0; i < numTracks; ++i) {

@@ -28,7 +28,7 @@ class CubeSurface:SurfaceHolder.Callback {
                     Log.e("surfaceCreate", "EGL环境是否创建成功::$isSuccess")
                 }*/
                 currentSurface = p0.surface
-                initFileData()
+                Log.e("surfaceDestroy", "创建")
             }
         }
 
@@ -44,18 +44,16 @@ class CubeSurface:SurfaceHolder.Callback {
         height = p3
 
         Log.e("surfaceDestroy", "改变")
-//        render()
+//        decodeThread()
     }
 
     override fun surfaceDestroyed(p0: SurfaceHolder) {
         mWeakReference.get()?.let {mainActivity->
-            with(mainActivity) {
-                /*if (isCube) {
-                    cleanupEGL()
-                    Log.e("surfaceDestroy", "销毁")
-                }*/
+            /*if (isCube) {
+                cleanupEGL()
                 Log.e("surfaceDestroy", "销毁")
-            }
+            }*/
+            Log.e("surfaceDestroy", "销毁")
         }
     }
 

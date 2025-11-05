@@ -17,7 +17,7 @@ RenderVideo::RenderVideo() {
 }
 
 
-int32_t videoWidth,videoHeight,surfaceWidth,surfaceHeight,videoStride;
+int32_t videoWidth = 1920,videoHeight = 1080,surfaceWidth,surfaceHeight,videoStride;
 void RenderVideo::initTexture(){
     glGenTextures(1, &texY);
     glBindTexture(GL_TEXTURE_2D, texY);
@@ -94,8 +94,6 @@ void RenderVideo::openDataFile() {
     media_status_t status = AMediaCodec_configure(mMediaCodec, format, nullptr,
                                                   nullptr,0);
 
-    initEGL();
-
 }
 
 void RenderVideo::checkAndActivateSurface(JNIEnv *env, jobject surface) {
@@ -150,25 +148,43 @@ void RenderVideo::checkAndActivateSurface(JNIEnv *env, jobject surface) {
         return;
     }
 
-
-
-
     LOGI("Surface reactivated successfully");
 
 }
 
+void RenderVideo::startPlayer(JNIEnv *env, jobject surface) {
 
-void RenderVideo::render(JNIEnv *env, jobject surface) {
+    queueCond.notify_all();
+
+    if (decodeThreadHandle.joinable()) decodeThreadHandle.join();
+    if (renderThreadHandle.joinable()) renderThreadHandle.join();
+
+    while (!frameQueue.empty()) {
+        delete[] frameQueue.front().data;
+        frameQueue.pop();
+    }
+
     if(isRunning)
         return;
-    isRunning = true;
-    checkAndActivateSurface(env,surface);
+
     AMediaCodec_start(mMediaCodec);
-    LOGE("render");
+
+    initEGL();
+    checkAndActivateSurface(env,surface);
+    initProgram();
     if (ANativeWindow_getWidth(mNativeWindow) <= 0 || ANativeWindow_getHeight(mNativeWindow) <= 0) {
         LOGE("Surface is invalid, skip rendering");
         return;
     }
+    isRunning = true;
+    eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    decodeThreadHandle = std::thread(&RenderVideo::decodeThread,this);
+    renderThreadHandle = std::thread(&RenderVideo::renderThread,this,env,surface);
+}
+
+void RenderVideo::decodeThread() {
+
+    LOGE("Decode thread started");
     while (isRunning) {
         ssize_t inputIndex = AMediaCodec_dequeueInputBuffer(mMediaCodec, 10000);
         if (inputIndex >= 0) {
@@ -184,6 +200,7 @@ void RenderVideo::render(JNIEnv *env, jobject surface) {
                 AMediaCodec_queueInputBuffer(mMediaCodec, inputIndex, 0, 0, 0,
                                              AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM);
                 isRunning = false;
+                break;
             }
         }
 
@@ -197,18 +214,33 @@ void RenderVideo::render(JNIEnv *env, jobject surface) {
             // ✅ 拿到帧数据，上传到 OpenGL
             if(!isRunning)
                 totalTimeStripe = info.presentationTimeUs;
-            renderFrameToTexture(outputBuf,&info.presentationTimeUs);
+
+
+            if (info.size > 0) {
+                Frame frame;
+                frame.size = info.size;
+                frame.ptsUs = info.presentationTimeUs;
+                frame.data = new uint8_t[frame.size];
+                memcpy(frame.data, outputBuf, frame.size);
+
+                {
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    frameQueue.push(frame);
+                }
+                queueCond.notify_one();
+            }
             AMediaCodec_releaseOutputBuffer(mMediaCodec, outputIndex, false);
+
         } else if (outputIndex == AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED) {
             // 可读取新格式（宽高）
             AMediaFormat* newFormat = AMediaCodec_getOutputFormat(mMediaCodec);
-            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_WIDTH, &videoWidth);
-            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_HEIGHT, &videoHeight);
+//            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_WIDTH, &videoWidth);
+//            AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_HEIGHT, &videoHeight);
+
             AMediaFormat_getInt32(format, "stride", &videoStride);
             int32_t colorFormat = -1;
             AMediaFormat_getInt32(newFormat, AMEDIAFORMAT_KEY_COLOR_FORMAT, &colorFormat);
             LOGI("format:%d   videoStride:%d",colorFormat,videoStride);
-            initProgram();
 
         }
 //        sleep(1);
@@ -219,27 +251,70 @@ void RenderVideo::render(JNIEnv *env, jobject surface) {
     LOGI("视频播放结束");
 }
 
-
-void renderFrame(){
-
+// ===================== 工具函数 =====================
+int64_t getSystemTimeUs() {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000000LL + now.tv_nsec / 1000LL;
 }
 
-void RenderVideo::renderFrameToTexture(uint8_t *yuvData,const int64_t *currentTimeStripe) {
-    /*glBindFramebuffer(GL_FRAMEBUFFER,videoFbo);
-    glViewport(0,0,surfaceWidth,surfaceHeight);
-    renderYUVAndLutFrame(yuvData,currentTimeStripe);
+// ===================== 渲染线程 =====================
+void RenderVideo::renderThread(JNIEnv *env, jobject surface) {
+    LOGI("Render thread started");
+    eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext);
+    int64_t startTimeUs = getSystemTimeUs();
+    int64_t maxTime = 100000;0
 
-*/
+    while (isRunning||!frameQueue.empty()) {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        queueCond.wait(lock, [this] { return !frameQueue.empty() || !isRunning; });
+
+//        if (!isRunning) break;
+        Frame frame = frameQueue.front();
+        frameQueue.pop();
+        lock.unlock();
+
+        // 时间同步控制
+        int64_t nowUs = (getSystemTimeUs() - startTimeUs);
+        if (frame.ptsUs > nowUs)
+            usleep(frame.ptsUs - nowUs);
+        else if(nowUs- frame.ptsUs > maxTime)
+            continue;
+
+        LOGI("ptsUs:%lld now:%lld 间隙%lld", frame.ptsUs, nowUs, frame.ptsUs - nowUs);
+
+
+        renderFrameToTexture(&frame);
+
+        delete[] frame.data;
+    }
+
+    LOGI("Render thread ended");
+}
+
+
+void RenderVideo::renderFrameToTexture(RenderVideo::Frame *yuvData) {
+    glBindFramebuffer(GL_FRAMEBUFFER,videoFbo);
+    glViewport(0,0,surfaceWidth,surfaceHeight);
+    renderYUVAndLutFrame(yuvData);
     glBindFramebuffer(GL_FRAMEBUFFER,0);
     glViewport(0, 0, surfaceWidth, surfaceHeight);
 
-    renderYUVAndLutFrame(yuvData,currentTimeStripe);
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGE("GL ERROR viewPort: %x ", err);
+    }
+    renderYUVAndLutFrame(yuvData);
 
+    GLenum err1 = glGetError();
+    if (err1 != GL_NO_ERROR) {
+        LOGE("GL ERROR decodeThread: %x ", err1);
+    }
     eglSwapBuffers(eglDisplay,eglSurface);
 
 }
 
-void RenderVideo::renderYUVAndLutFrame(uint8_t *yuvData, const int64_t *currentTimeStripe) {
+void RenderVideo::renderYUVAndLutFrame(RenderVideo::Frame *yuvData) {
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(renderProgram);
     LOGE("rendFrameToTexture videoWidth:%d videoHeight:%d",videoWidth,videoHeight);
@@ -249,9 +324,9 @@ void RenderVideo::renderYUVAndLutFrame(uint8_t *yuvData, const int64_t *currentT
     int uvHeight = videoHeight / 2;
     int uSize = uvWidth * uvHeight;
 
-    uint8_t* yPlane = yuvData;
-    uint8_t* uPlane = yuvData + ySize;
-    uint8_t* vPlane = yuvData + ySize + uSize;
+    uint8_t* yPlane = yuvData->data;
+    uint8_t* uPlane = yuvData->data + ySize;
+    uint8_t* vPlane = yuvData->data + ySize + uSize;
 
     LOGE("Y: %d %d %d %d", yPlane[0], yPlane[1], yPlane[2], yPlane[3]);
     LOGE("U: %d %d %d %d", uPlane[0], uPlane[1], uPlane[2], uPlane[3]);
@@ -262,6 +337,11 @@ void RenderVideo::renderYUVAndLutFrame(uint8_t *yuvData, const int64_t *currentT
     glUniform1i(glGetUniformLocation(renderProgram, "texY"), 0);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, videoWidth, videoHeight,
                     GL_RED, GL_UNSIGNED_BYTE, yPlane);
+
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGE("GL ERROR: %x ,lutsize:%d", err,lutSize);
+    }
 
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, texU);
@@ -275,24 +355,22 @@ void RenderVideo::renderYUVAndLutFrame(uint8_t *yuvData, const int64_t *currentT
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, uvWidth, uvHeight,
                     GL_RED, GL_UNSIGNED_BYTE, vPlane);
 
-    LOGI("总长：%lld 目前：%lld",totalTimeStripe,*currentTimeStripe);
+    LOGI("总长：%lld 目前：%lld",totalTimeStripe,yuvData->ptsUs);
     // LUT
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_3D, lutTex);
     glUniform1i(glGetUniformLocation(renderProgram, "lutTex"), 3);
 
     glUniform1f(glGetUniformLocation(renderProgram, "lutSize"), (float)lutSize);
-    glUniform1f(glGetUniformLocation(renderProgram,"split"),(float)*currentTimeStripe/(float)totalTimeStripe);
+    float progress = (float)yuvData->ptsUs/1000.0/((float)totalTimeStripe/1000.0);
+    if (progress > 0.93f) progress = 1.0f;
+    glUniform1f(glGetUniformLocation(renderProgram,"split"),progress);
 
     // 清除并绘制
-
     glBindVertexArray(vao);
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        LOGE("GL ERROR: %x ,lutsize:%d", err,lutSize);
-    }
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glBindVertexArray(0);
+
 }
 
 
@@ -327,7 +405,7 @@ void RenderVideo::initProgram() {
     initTexture();
     GLenum err = glGetError();
     if (err != GL_NO_ERROR) {
-        LOGE("GL ERROR: %x", err);
+        LOGE("GL ERROR initProgram: %x", err);
     }
 }
 
@@ -443,6 +521,13 @@ GLuint RenderVideo::loadCubeLUT(const char *cubePath, int& lutSizeOut) {
     lutSizeOut = lutSize;
     return tex3D;
 }
+
+
+
+
+
+
+
 
 
 

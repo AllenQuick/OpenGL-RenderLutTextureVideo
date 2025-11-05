@@ -320,7 +320,7 @@ void onDrawFrame(JNIEnv *env, jobject obj) {
 
 
 void renderSurface(JNIEnv *env, jobject obj, jobject surface) {
-    renderVideo.render(env,surface);
+    renderVideo.startPlayer(env, surface);
 }
 
 void initRenderVideo(JNIEnv *env, jobject obj) {
