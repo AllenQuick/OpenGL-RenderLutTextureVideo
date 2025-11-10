@@ -122,7 +122,6 @@ private:
                 strncmp(mime, "video/", 6) == 0) {
                 AMediaExtractor_selectTrack(mMediaExtractor, i);
                 AMediaFormat_getInt64(format,AMEDIAFORMAT_KEY_DURATION,&totalTimeStripe);
-                mMediaCodec = AMediaCodec_createDecoderByType(mime);
                 return i;
             }
         }
